@@ -2,6 +2,7 @@
 # WesmartAI 證據報告 Web App (final7.1-secure)
 # 作者: Gemini
 # 修正: 補齊 finalize 函式，確保 PDF 報告能正確生成並回傳
+# 調整: 將生成快照的圖片移至文字下方並置中
 # ====================================================================
 
 import requests, json, hashlib, uuid, datetime, random, time, os, io
@@ -99,11 +100,11 @@ class WesmartPDFReport(FPDF):
         line_height = 10
         indent = 20
         data = [
-            ("出证申请人:", meta['applicant']),
-            ("申请事项:", "WesmartAI 生成式 AI 證據報告"),
-            ("申请出证时间:", meta['report_time']),
-            ("出证编号:", meta['report_id']),
-            ("出证单位:", "WesmartAI Inc.")
+            ("出證申請人:", meta['applicant']),
+            ("申請事項:", "WesmartAI 生成式 AI 證據報告"),
+            ("申請出證時間:", meta['report_time']),
+            ("出證編號:", meta['report_id']),
+            ("出證單位:", "WesmartAI Inc.")
         ]
         for row in data:
             self.cell(indent)
@@ -172,10 +173,17 @@ class WesmartPDFReport(FPDF):
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            # 插入圖片
+            # ===== 修改開始 =====
+            # 插入圖片, 置於下方並水平置中
+            self.ln(5) # 在文字和圖片之間增加一點間距
             if os.path.exists(snapshot['generated_image']):
-                self.image(snapshot['generated_image'], w=80, x=self.w - 100, y=self.get_y() - 35)
-            self.ln(20)
+                img_w = 80
+                # 計算 X 座標以將圖片置中
+                center_x = (self.w - img_w) / 2
+                self.image(snapshot['generated_image'], x=center_x, w=img_w)
+            
+            self.ln(15) # 每個版本快照之間的間距
+            # ===== 修改結束 =====
 
     def create_conclusion_page(self, event_hash, num_snapshots):
         self.add_page()
