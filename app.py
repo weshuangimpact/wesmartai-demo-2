@@ -1,10 +1,12 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final8.0-secure)
+# WesmartAI 證據報告 Web App (final8.1-secure)
 # 作者: Gemini
 # 核心更新:
 # 1. 所有生成內容轉為 Base64 進行封存。
 # 2. 雜湊計算改為基於 Base64 字串的 UTF-8 編碼。
 # 3. 封存結構中加入 content_base64 欄位，強化可驗證性。
+# 修正 (Bug Fix):
+# - 修正了 conclusion 頁面因未切換回中文字體而導致的 PDF 生成失敗錯誤。
 # ====================================================================
 
 import requests, json, hashlib, uuid, datetime, random, time, os, io, base64
@@ -133,15 +135,20 @@ class WesmartPDFReport(FPDF):
         self.add_page()
         self.chapter_title("一、生成任務基本資訊")
         self.set_font("NotoSansTC", "", 10)
+        self.set_text_color(0)
         for key, value in experiment_meta.items():
             self.cell(40, 8, f"  {key}:", align='L')
+            self.set_font("NotoSansTC", "", 9)
             self.set_text_color(80)
             self.multi_cell(0, 8, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.set_font("NotoSansTC", "", 10)
+            self.set_text_color(0)
         self.ln(10)
 
         self.chapter_title("二、各版本生成快照")
         for snapshot in snapshots:
             self.set_font("NotoSansTC", "", 12)
+            self.set_text_color(0)
             self.cell(0, 10, f"版本索引: {snapshot['version_index']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
             self.ln(2)
             details = [
@@ -152,7 +159,9 @@ class WesmartPDFReport(FPDF):
             ]
             for key, value in details:
                 self.set_font("NotoSansTC", "", 10)
+                self.set_text_color(0)
                 self.cell(60, 7, f"  - {key}:", align='L')
+                self.set_font("NotoSansTC", "", 9)
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
@@ -170,6 +179,7 @@ class WesmartPDFReport(FPDF):
         )
         self.ln(10)
         self.set_font("NotoSansTC", "", 12)
+        self.set_text_color(0)
         self.cell(0, 10, "最終事件雜湊值 (Final Event Hash):", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_font("Courier", "B", 11)
         self.multi_cell(0, 8, event_hash, border=1, align='C', padding=5)
@@ -179,6 +189,12 @@ class WesmartPDFReport(FPDF):
         qr_path = os.path.join(app.config['UPLOAD_FOLDER'], f"qr_{event_hash[:10]}.png")
         qr.save(qr_path)
         self.ln(10)
+
+        # ===== BUG FIX START =====
+        # 在寫入中文前，必須將字體切換回支援 Unicode 的字體
+        self.set_font("NotoSansTC", "", 10)
+        # ===== BUG FIX END =====
+        
         self.cell(0, 10, "掃描 QR Code 以核對報告真偽。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         self.image(qr_path, w=50, x=(self.w-50)/2)
 
@@ -219,27 +235,22 @@ def generate():
         image_response.raise_for_status()
         img_bytes = image_response.content
 
-        # ===== 核心修改: Base64 處理 =====
-        # 1. 將圖片二進位轉為 Base64 字串
+        # 核心修改: Base64 處理
         img_base64_str = base64.b64encode(img_bytes).decode('utf-8')
-        
-        # 2. 對 Base64 字串進行 SHA-256 雜湊
         snapshot_hash = sha256_bytes(img_base64_str.encode('utf-8'))
-
-        # 為了預覽和PDF生成，仍然儲存實體檔案
+        
         filename = f"v{version_counter}_{int(time.time())}.png"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         Image.open(io.BytesIO(img_bytes)).save(filepath)
 
-        # 3. 建立包含 Base64 的封存區塊
         sealed_block = {
             "version_index": version_counter,
             "trace_token": trace_token,
             "input_data": payload,
             "snapshot_hash": snapshot_hash,
             "sealed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "content_base64": img_base64_str, # 新增欄位
-            "generated_image_path": filepath # 保留路徑供PDF使用
+            "content_base64": img_base64_str,
+            "generated_image_path": filepath
         }
         snapshots.append(sealed_block)
         version_counter += 1
@@ -275,7 +286,6 @@ def finalize():
         }
         pdf.create_generation_details_page(experiment_meta, snapshots)
 
-        # 最終事件雜湊將包含所有 Base64 內容，確保完整性
         final_event_data = json.dumps(snapshots, sort_keys=True, ensure_ascii=False).encode('utf-8')
         final_event_hash = sha256_bytes(final_event_data)
         pdf.create_conclusion_page(final_event_hash, len(snapshots))
