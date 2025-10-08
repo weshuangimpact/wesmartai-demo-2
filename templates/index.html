@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WesmartAI圖像創作歷程證據封存系統</title>
+    <title>WesmartAI 圖像生成即時加密封裝系統</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 2em; background-color: #f4f6f8; color: #333; }
         .container { max-width: 900px; margin: auto; background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -12,46 +12,75 @@
         .form-group { display: flex; flex-direction: column; }
         .full-width { grid-column: 1 / -1; }
         label { font-weight: 600; margin-bottom: 0.5em; color: #555; }
-        input, textarea, button { font-size: 1em; padding: 0.8em; border-radius: 6px; border: 1px solid #ccc; }
+        input, textarea, button { font-size: 1em; padding: 0.8em; border-radius: 6px; border: 1px solid #ccc; transition: all 0.2s ease; }
+        textarea { resize: vertical; min-height: 80px; }
         button { background-color: #3f51b5; color: white; border: none; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #303f9f; }
         button:disabled { background-color: #9fa8da; cursor: not-allowed; }
-        #result-area { text-align: center; margin-top: 1.5em; }
-        #result-area img { max-width: 50%; height: auto; border-radius: 8px; border: 1px solid #ddd; }
+        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.5em; margin-top: 1.5em; }
+        .result-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+        .result-card img { max-width: 100%; height: auto; display: block; }
+        .result-card .info { padding: 1em; margin: 0; background: #fafafa; font-size: 0.9em; flex-grow: 1; }
+        .result-card .action { padding: 0.8em; background: #f0f0f0; }
+        .result-card .action button { width: 100%; padding: 0.6em; font-size: 0.9em; background-color: #00796b; }
+        .result-card .action button:disabled { background-color: #80cbc4; }
         .spinner { margin: 2em auto; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3f51b5; border-radius: 50%; animation: spin 1s linear infinite; display: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #status { text-align: center; margin-top: 1em; font-weight: 500; min-height: 1.2em; }
         hr { border: none; height: 1px; background-color: #e0e0e0; margin: 2em 0; }
+        {% if not api_key_set %}
+        .warning { background-color: #fff3e0; color: #e65100; padding: 1em; border-radius: 8px; text-align: center; margin-bottom: 2em; }
+        {% endif %}
     </style>
 </head>
 <body>
     <div class="container">
         <h1>WesmartAI 證據報告生成器</h1>
         
-        <h2>1. 生成證據</h2>
+        {% if not api_key_set %}
+        <div class="warning">
+            <strong>注意：</strong> 後端尚未設定 TOGETHER_API_KEY 環境變數，圖像生成功能將無法使用。
+        </div>
+        {% endif %}
+
+        <h2>1. 生成圖像 (預覽)</h2>
         <div class="form-grid">
             <div class="form-group full-width">
-                <label for="applicant_name">出證申請人名稱</label>
-                <input type="text" id="applicant_name" placeholder="請輸入您的姓名或公司名稱">
-            </div>
-            <div class="form-group full-width">
                 <label for="prompt">輸入指令 (Prompt)</label>
-                <textarea id="prompt" placeholder="例如：A blue sports car" rows="3"></textarea>
+                <textarea id="prompt" placeholder="例如：A blue sports car driving on a coastal road, cinematic lighting"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="seed">隨機種子 (Seed) (可選)</label>
+                <input type="text" id="seed" placeholder="留空則隨機生成">
+            </div>
+            <div class="form-group">
+                <label for="width">圖片寬度</label>
+                <input type="number" id="width" value="512">
+            </div>
+             <div class="form-group">
+                <label for="height">圖片高度</label>
+                <input type="number" id="height" value="512">
             </div>
             <div class="form-group full-width">
-                <button id="generate-btn">生成圖像與證據檔案 (.json)</button>
+                <button id="generate-btn">生成圖像</button>
             </div>
         </div>
         
         <div id="spinner" class="spinner"></div>
         <div id="status"></div>
-        <div id="result-area"></div>
+        
+        <div id="results-grid"></div>
 
         <hr>
 
-        <h2>2. 生成報告</h2>
+        <h2>2. 完成報告</h2>
         <div class="form-group full-width">
-             <button id="finalize-btn" disabled>下載 PDF 報告</button>
+            <label for="applicant_name">出證申請人名稱</label>
+            <input type="text" id="applicant_name" placeholder="請輸入您的姓名或公司名稱">
+        </div>
+        
+        <div class="form-group full-width">
+             <button id="finalize-btn" disabled>下載報告 (請先存證至少一張圖片)</button>
         </div>
     </div>
 
@@ -60,8 +89,9 @@
         const finalizeBtn = document.getElementById('finalize-btn');
         const spinner = document.getElementById('spinner');
         const statusEl = document.getElementById('status');
-        const resultArea = document.getElementById('result-area');
+        const resultsGrid = document.getElementById('results-grid');
 
+        // 下載檔案的輔助函式
         function downloadFile(url) {
             const a = document.createElement('a');
             a.href = url;
@@ -71,43 +101,85 @@
             document.body.removeChild(a);
         }
 
+        // 當點擊「生成圖像」
         generateBtn.addEventListener('click', async () => {
-            const applicantName = document.getElementById('applicant_name').value;
-            const prompt = document.getElementById('prompt').value;
-            if (!applicantName || !prompt) {
-                alert('申請人名稱 與 Prompt 皆為必填項！');
+            const payload = {
+                prompt: document.getElementById('prompt').value,
+                seed: document.getElementById('seed').value,
+                width: document.getElementById('width').value,
+                height: document.getElementById('height').value,
+            };
+
+            if (!payload.prompt) {
+                alert('Prompt 為必填項！');
                 return;
             }
 
             spinner.style.display = 'block';
-            statusEl.textContent = '正在生成圖像與證據正本...';
+            statusEl.textContent = '圖像生成中，請稍候...';
             generateBtn.disabled = true;
-            finalizeBtn.disabled = true;
-            resultArea.innerHTML = '';
 
             try {
                 const response = await fetch('/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ applicant_name: applicantName, prompt: prompt }),
+                    body: JSON.stringify(payload),
                 });
                 const result = await response.json();
                 
                 if (response.ok) {
-                    statusEl.textContent = '✅ 生成成功！已自動觸發原圖與 JSON 證據檔案下載。';
+                    statusEl.textContent = `✅ 預覽圖 ${result.version} 生成成功！請選擇是否存證。`;
+                    const card = document.createElement('div');
+                    card.className = 'result-card';
                     
-                    // 顯示預覽圖
-                    resultArea.innerHTML = `<img src="${result.preview_image_url}" alt="Generated Image">`;
+                    const sealBtnId = `seal-btn-${result.version}`;
+                    card.innerHTML = `
+                        <img src="${result.image_url}" alt="Generated Image ${result.version}">
+                        <div class="info">
+                            <p><b>版本 ${result.version}</b><br>Seed: ${result.seed}</p>
+                        </div>
+                        <div class="action">
+                            <button id="${sealBtnId}">存證並下載</button>
+                        </div>
+                    `;
+                    resultsGrid.appendChild(card);
                     
-                    // 自動下載
-                    downloadFile(result.image_url);
-                    downloadFile(result.json_url);
+                    // 為新生成的按鈕加上事件監聽
+                    document.getElementById(sealBtnId).addEventListener('click', async (e) => {
+                        const sealBtn = e.target;
+                        sealBtn.disabled = true;
+                        sealBtn.textContent = '存證中...';
 
-                    // 啟用報告下載按鈕
-                    finalizeBtn.disabled = false;
+                        try {
+                            const sealResponse = await fetch('/seal', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ filename: result.filename }),
+                            });
+                            const sealResult = await sealResponse.json();
+
+                            if (sealResponse.ok) {
+                                // 1. 觸發下載
+                                downloadFile(result.download_url);
+                                // 2. 更新按鈕狀態
+                                sealBtn.textContent = '已存證 ✅';
+                                // 3. 啟用「下載報告」按鈕
+                                finalizeBtn.disabled = false;
+                                finalizeBtn.textContent = '下載報告';
+                                statusEl.textContent = `版本 ${result.version} 已存證成功！`;
+                            } else {
+                                throw new Error(sealResult.error || '存證失敗');
+                            }
+                        } catch (err) {
+                            sealBtn.textContent = '存證失敗 ❌';
+                            statusEl.textContent = `❌ 錯誤: ${err.message}`;
+                        }
+                    });
+
                 } else {
                     throw new Error(result.error || '未知錯誤');
                 }
+
             } catch (error) {
                 statusEl.textContent = `❌ 錯誤: ${error.message}`;
             } finally {
@@ -116,7 +188,14 @@
             }
         });
 
+        // 當點擊「下載報告」
         finalizeBtn.addEventListener('click', async () => {
+            const applicantName = document.getElementById('applicant_name').value;
+            if (!applicantName) {
+                alert('請輸入出證申請人名稱！');
+                return;
+            }
+
             spinner.style.display = 'block';
             statusEl.textContent = '正在製作 PDF 報告...';
             finalizeBtn.disabled = true;
@@ -125,16 +204,18 @@
                 const response = await fetch('/finalize', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}), // body可以為空，因為後端會從全域變數取資料
+                    body: JSON.stringify({ applicant_name: applicantName }),
                 });
                 const result = await response.json();
                 
                 if (response.ok) {
                     statusEl.textContent = '報告製作完成！即將開始下載...';
                     downloadFile(result.report_url);
+                    alert('報告已準備下載。');
                 } else {
                     throw new Error(result.error || '未知錯誤');
                 }
+
             } catch (error) {
                 statusEl.textContent = `❌ 錯誤: ${error.message}`;
             } finally {
