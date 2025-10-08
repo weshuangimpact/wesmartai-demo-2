@@ -10,88 +10,94 @@
         h1, h2 { color: #1a237e; text-align: center; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; margin-bottom: 1.5em; }
         .form-group { display: flex; flex-direction: column; }
+        .full-width { grid-column: 1 / -1; }
         label { font-weight: 600; margin-bottom: 0.5em; color: #555; }
         input, textarea, button { font-size: 1em; padding: 0.8em; border-radius: 6px; border: 1px solid #ccc; transition: all 0.2s ease; }
-        input:focus, textarea:focus { border-color: #3f51b5; box-shadow: 0 0 0 3px rgba(63, 81, 181, 0.2); outline: none; }
         textarea { resize: vertical; min-height: 80px; }
-        .full-width { grid-column: 1 / -1; }
-        button { background-color: #3f51b5; color: white; border: none; cursor: pointer; font-weight: 600; }
+        button { background-color: #3f51b5; color: white; border: none; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #303f9f; }
-        #finalize-btn { background-color: #1e88e5; }
-        #finalize-btn:hover { background-color: #1565c0; }
-        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3f51b5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: none; margin: 1em auto; }
+        button:disabled { background-color: #9fa8da; cursor: not-allowed; }
+        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.5em; margin-top: 1.5em; }
+        .result-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+        .result-card img { max-width: 100%; height: auto; display: block; }
+        .result-card p { padding: 1em; margin: 0; background: #fafafa; font-size: 0.9em; }
+        .spinner { margin: 2em auto; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3f51b5; border-radius: 50%; animation: spin 1s linear infinite; display: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1em; margin-top: 2em; }
-        .result-card { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .result-card img { max-width: 100%; display: block; }
-        .result-card p { font-size: 0.85em; padding: 0.8em; margin: 0; background: #fafafa; }
-        #status { text-align: center; margin-top: 1em; font-weight: 600; }
-        .api-status { text-align: center; padding: 0.5em; border-radius: 6px; margin-bottom: 1.5em; font-weight: 600; }
-        .api-ok { background-color: #e8f5e9; color: #2e7d32; }
-        .api-error { background-color: #ffebee; color: #c62828; }
+        #status { text-align: center; margin-top: 1em; font-weight: 500; min-height: 1.2em; }
+        hr { border: none; height: 1px; background-color: #e0e0e0; margin: 2em 0; }
+        {% if not api_key_set %}
+        .warning { background-color: #fff3e0; color: #e65100; padding: 1em; border-radius: 8px; text-align: center; margin-bottom: 2em; }
+        {% endif %}
     </style>
 </head>
 <body>
     <div class="container">
         <h1>WesmartAI 證據報告生成器</h1>
-
-        {% if api_key_set %}
-            <div class="api-status api-ok">後端 API Key 已成功讀取</div>
-        {% else %}
-            <div class="api-status api-error">錯誤：後端尚未設定 TOGETHER_API_KEY 環境變數</div>
-        {% endif %}
         
-        <div class="form-grid">
-            <div class="form-group">
-                <label for="applicant_name">出證申請人名稱</label>
-                <input type="text" id="applicant_name" placeholder="例如: Wes Huang">
-            </div>
-            <div class="form-group">
-                </div>
-            <div class="form-group">
-                <label for="width">寬度</label>
-                <input type="number" id="width" value="512">
-            </div>
-            <div class="form-group">
-                <label for="height">高度</label>
-                <input type="number" id="height" value="512">
-            </div>
+        {% if not api_key_set %}
+        <div class="warning">
+            <strong>注意：</strong> 後端尚未設定 TOGETHER_API_KEY 環境變數，圖像生成功能將無法使用。
         </div>
+        {% endif %}
 
-        <hr>
-        <h2>圖像生成</h2>
+        <h2>1. 生成圖像</h2>
         <div class="form-grid">
             <div class="form-group full-width">
-                <label for="prompt">生成指令 (Prompt)</label>
-                <textarea id="prompt" placeholder="請輸入圖像生成指令..."></textarea>
+                <label for="prompt">輸入指令 (Prompt)</label>
+                <textarea id="prompt" placeholder="例如：A blue sports car driving on a coastal road, cinematic lighting"></textarea>
             </div>
             <div class="form-group">
-                <label for="seed">隨機種子 (Seed) - 選填</label>
-                <input type="text" id="seed" placeholder="留空則隨機">
+                <label for="seed">隨機種子 (Seed) (可選)</label>
+                <input type="text" id="seed" placeholder="留空則隨機生成">
             </div>
             <div class="form-group">
-                <label>&nbsp;</label>
+                <label for="width">圖片寬度</label>
+                <input type="number" id="width" value="512">
+            </div>
+             <div class="form-group">
+                <label for="height">圖片高度</label>
+                <input type="number" id="height" value="512">
+            </div>
+            <div class="form-group full-width">
                 <button id="generate-btn">生成圖像</button>
             </div>
         </div>
         
-        <div class="spinner" id="spinner"></div>
+        <div id="spinner" class="spinner"></div>
         <div id="status"></div>
         
         <div id="results-grid"></div>
 
         <hr>
+
+        <h2>2. 完成與下載</h2>
         <div class="form-group full-width">
-             <button id="finalize-btn">完成並製作證據報告</button>
+            <label for="applicant_name">出證申請人名稱</label>
+            <input type="text" id="applicant_name" placeholder="請輸入您的姓名或公司名稱">
+        </div>
+        
+        <div class="form-grid">
+            <div class="form-group">
+                <button id="download-images-btn" style="background-color: #00796b;">下載原圖</button>
+            </div>
+            <div class="form-group">
+                 <button id="finalize-btn">下載報告</button>
+            </div>
         </div>
     </div>
 
     <script>
         const generateBtn = document.getElementById('generate-btn');
         const finalizeBtn = document.getElementById('finalize-btn');
+        const downloadImagesBtn = document.getElementById('download-images-btn');
         const spinner = document.getElementById('spinner');
         const statusEl = document.getElementById('status');
         const resultsGrid = document.getElementById('results-grid');
+
+        let generatedFiles = {
+            reportUrl: null,
+            imageUrls: []
+        };
 
         generateBtn.addEventListener('click', async () => {
             const payload = {
@@ -151,6 +157,7 @@
             spinner.style.display = 'block';
             statusEl.textContent = '正在製作 PDF 報告...';
             finalizeBtn.disabled = true;
+            downloadImagesBtn.disabled = true;
 
             try {
                 const response = await fetch('/finalize', {
@@ -162,10 +169,15 @@
                 
                 if (response.ok) {
                     statusEl.textContent = '報告製作完成！即將開始下載...';
-                    window.location.href = result.report_url;
-                    setTimeout(() => {
-                        alert('報告已準備下載。若要開始新任務，請重新整理頁面。');
-                    }, 1000);
+                    
+                    // 儲存檔案 URLs
+                    generatedFiles.reportUrl = result.report_url;
+                    generatedFiles.imageUrls = result.image_urls || [];
+                    
+                    // 觸發報告下載
+                    downloadFile(generatedFiles.reportUrl);
+
+                    alert('報告已準備下載。');
                 } else {
                     throw new Error(result.error || '未知錯誤');
                 }
@@ -175,8 +187,32 @@
             } finally {
                 spinner.style.display = 'none';
                 finalizeBtn.disabled = false;
+                downloadImagesBtn.disabled = false;
             }
         });
+
+        downloadImagesBtn.addEventListener('click', () => {
+            if (generatedFiles.imageUrls.length === 0) {
+                 alert('目前沒有已生成的圖片可供下載。請先生成報告以取得圖片連結！');
+                return;
+            }
+            statusEl.textContent = '正在下載所有原圖...';
+            generatedFiles.imageUrls.forEach(url => {
+                downloadFile(url);
+            });
+             setTimeout(() => {
+                statusEl.textContent = '圖片下載已觸發。';
+            }, 1500);
+        });
+
+        function downloadFile(url) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = url.split('/').pop(); // 從 URL 中取得檔名
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
     </script>
 </body>
 </html>
