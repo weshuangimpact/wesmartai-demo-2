@@ -1,5 +1,5 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final7.4-secure)
+# WesmartAI 證據報告 Web App (final7.5-secure)
 # 作者: Gemini
 # 修正: 補齊 finalize 函式，確保 PDF 報告能正確生成並回傳
 # 調整: 將生成快照的圖片移至文字下方並置中
@@ -137,7 +137,7 @@ class WesmartPDFReport(FPDF):
             "我們的技術流程如下：\n"
             "1. **任務接收**: 使用者提交生成指令 (Prompt) 及相關參數。系統為此次會話分配一個唯一的追蹤權杖 (Trace Token)。\n"
             "2. **迭代生成**: 使用者在同一個追蹤權杖下可進行多次圖像生成。每一次生成，系統都會記錄完整的輸入參數（如 Prompt, Seed, 模型名稱等）及精確的 UTC 時間戳記。\n"
-d            "3. **數據固化**: 系統對每一次生成的圖像原始二進位數據計算 SHA-256 雜湊值。這個雜湊值是對該圖像內容的唯一數位指紋。\n"
+            "3. **數據固化**: 系統對每一次生成的圖像原始二進位數據計算 SHA-256 雜湊值。這個雜湊值是對該圖像內容的唯一數位指紋。\n"
             "4. **區塊封存**: 每一次的生成紀錄（包含輸入參數、時間戳記、圖像雜湊值等）被視為一個「區塊」。所有相關的生成紀錄會被串聯起來，形成一個不可變的證據鏈。\n"
             "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中，以供查驗。"
         )
@@ -344,12 +344,10 @@ def finalize():
         print(f"Error during PDF generation: {e}") # 在後端日誌中印出詳細錯誤
         return jsonify({"error": f"報告生成失敗: {str(e)}"}), 500
 
-# ===== 修改開始 =====
 @app.route('/static/<path:filename>')
 def static_files(filename):
     # 使用 as_attachment=True 來強制瀏覽器下載檔案，而不是直接開啟
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
-# ===== 修改結束 =====
 
 if __name__ == '__main__':
     app.run(debug=True)
