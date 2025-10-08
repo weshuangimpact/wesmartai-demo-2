@@ -311,4 +311,19 @@ def finalize():
             "image_urls": image_urls
         })
     except Exception as e:
-        print(f"報告生成失敗: {
+        print(f"報告生成失敗: {e}")
+        return jsonify({"error": f"報告生成失敗: {str(e)}"}), 500
+
+# 建立一個給前端預覽圖片用的路由 (不強制下載)
+@app.route('/static/preview/<path:filename>')
+def static_preview(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# 建立一個專門用來下載檔案的路由 (強制下載)
+@app.route('/static/download/<path:filename>')
+def static_download(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
