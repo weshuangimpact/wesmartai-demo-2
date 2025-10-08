@@ -1,13 +1,13 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final7.6-secure)
+# WesmartAI 證據報告 Web App (final8.0-secure)
 # 作者: Gemini
-# 修正: 補齊 finalize 函式，確保 PDF 報告能正確生成並回傳
-# 調整: 將生成快照的圖片移至文字下方並置中
-# 新增: 配合 index.html 的雙按鈕下載功能，調整 finalize API 的回傳內容
-# 修正: 讓所有靜態檔案都以附件方式下載，而非在瀏覽器中開啟
+# 核心更新:
+# 1. 所有生成內容轉為 Base64 進行封存。
+# 2. 雜湊計算改為基於 Base64 字串的 UTF-8 編碼。
+# 3. 封存結構中加入 content_base64 欄位，強化可驗證性。
 # ====================================================================
 
-import requests, json, hashlib, uuid, datetime, random, time, os, io
+import requests, json, hashlib, uuid, datetime, random, time, os, io, base64
 from flask import Flask, render_template, request, jsonify, send_from_directory, url_for
 from PIL import Image
 from fpdf import FPDF
@@ -37,7 +37,6 @@ def sanitize_text(t, max_len=150):
 class WesmartPDFReport(FPDF):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # 檢查並下載字型
         if not os.path.exists("NotoSansTC.otf"):
             print("正在下載中文字型...")
             try:
@@ -55,14 +54,12 @@ class WesmartPDFReport(FPDF):
         self.logo_path = "LOGO.jpg" if os.path.exists("LOGO.jpg") else None
 
     def header(self):
-        # 設定背景浮水印
         if self.logo_path:
             with self.local_context(fill_opacity=0.08, stroke_opacity=0.08):
                 img_w = 120
                 center_x = (self.w - img_w) / 2
                 center_y = (self.h - img_w) / 2
                 self.image(self.logo_path, x=center_x, y=center_y, w=img_w)
-        # 非首頁的頁首
         if self.page_no() > 1:
             self.set_font("NotoSansTC", "", 9)
             self.set_text_color(128)
@@ -90,30 +87,21 @@ class WesmartPDFReport(FPDF):
     def create_cover(self, meta):
         self.add_page()
         if self.logo_path:
-            img_w = 60
-            center_x = (self.w - img_w) / 2
-            self.image(self.logo_path, x=center_x, y=25, w=img_w)
+            self.image(self.logo_path, x=(self.w-60)/2, y=25, w=60)
         self.set_y(100)
         self.set_font("NotoSansTC", "", 28)
         self.cell(0, 20, "WesmartAI 證據報告", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         self.ln(20)
         self.set_font("NotoSansTC", "", 12)
-        col_width = 45
-        line_height = 10
-        indent = 20
         data = [
-            ("出證申請人:", meta['applicant']),
-            ("申請事項:", "WesmartAI 生成式 AI 證據報告"),
-            ("申請出證時間:", meta['report_time']),
-            ("出證編號:", meta['report_id']),
+            ("出證申請人:", meta['applicant']), ("申請事項:", "WesmartAI 生成式 AI 證據報告"),
+            ("申請出證時間:", meta['report_time']), ("出證編號:", meta['report_id']),
             ("出證單位:", "WesmartAI Inc.")
         ]
         for row in data:
-            self.cell(indent)
-            self.set_font("NotoSansTC", "", 12)
-            self.cell(col_width, line_height, row[0], align='L')
-            self.set_font("NotoSansTC", "", 11)
-            self.cell(0, line_height, row[1], new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+            self.cell(20)
+            self.cell(45, 10, row[0], align='L')
+            self.multi_cell(0, 10, row[1], new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
 
     def create_disclaimer_page(self):
         self.add_page()
@@ -135,23 +123,20 @@ class WesmartPDFReport(FPDF):
             "WesmartAI 的圖像生成存證服務，旨在為每一次 AI 生成操作提供透明、可追溯且難以篡改的技術證據。本服務的核心是「生成即存證」，確保從使用者提交指令到最終圖像產生的每一個環節都被記錄在案。\n\n"
             "我們的技術流程如下：\n"
             "1. **任務接收**: 使用者提交生成指令 (Prompt) 及相關參數。系統為此次會話分配一個唯一的追蹤權杖 (Trace Token)。\n"
-            "2. **迭代生成**: 使用者在同一個追蹤權杖下可進行多次圖像生成。每一次生成，系統都會記錄完整的輸入參數（如 Prompt, Seed, 模型名稱等）及精確的 UTC 時間戳記。\n"
-            "3. **數據固化**: 系統對每一次生成的圖像原始二進位數據計算 SHA-256 雜湊值。這個雜湊值是對該圖像內容的唯一數位指紋。\n"
-            "4. **區塊封存**: 每一次的生成紀錄（包含輸入參數、時間戳記、圖像雜湊值等）被視為一個「區塊」。所有相關的生成紀錄會被串聯起來，形成一個不可變的證據鏈。\n"
-            "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中，以供查驗。"
+            "2. **迭代生成**: 使用者在同一個追蹤權杖下可進行多次圖像生成。每一次生成，系統都會記錄完整的輸入參數及精確的 UTC 時間戳記。\n"
+            "3. **數據固化 (Base64)**: 系統將每一次生成的圖像原始二進位數據轉為 Base64 字串。接著對此 Base64 字串進行 SHA-256 運算，產生唯一的數位指紋。\n"
+            "4. **區塊封存**: 每一次的生成紀錄（包含輸入參數、時間戳記、Base64 內容及其雜湊值）被視為一個「區塊」，串聯形成不可變的證據鏈。\n"
+            "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中。"
         )
 
     def create_generation_details_page(self, experiment_meta, snapshots):
         self.add_page()
         self.chapter_title("一、生成任務基本資訊")
         self.set_font("NotoSansTC", "", 10)
-        line_height = 8
         for key, value in experiment_meta.items():
-            self.set_font("NotoSansTC", "", 10)
-            self.cell(40, line_height, f"  {key}:", align='L')
-            self.set_font("NotoSansTC", "", 9)
+            self.cell(40, 8, f"  {key}:", align='L')
             self.set_text_color(80)
-            self.multi_cell(0, line_height, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.multi_cell(0, 8, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(10)
 
         self.chapter_title("二、各版本生成快照")
@@ -159,58 +144,44 @@ class WesmartPDFReport(FPDF):
             self.set_font("NotoSansTC", "", 12)
             self.cell(0, 10, f"版本索引: {snapshot['version_index']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
             self.ln(2)
-
-            self.set_font("NotoSansTC", "", 9)
             details = [
                 ("時間戳記 (UTC)", snapshot['sealed_at']),
-                ("圖像雜湊 (SHA-256)", snapshot['snapshot_hash']),
+                ("圖像雜湊 (SHA-256 over Base64)", snapshot['snapshot_hash']),
                 ("輸入指令 (Prompt)", snapshot['input_data']['prompt']),
                 ("隨機種子 (Seed)", str(snapshot['input_data']['seed']))
             ]
-
             for key, value in details:
                 self.set_font("NotoSansTC", "", 10)
-                self.cell(45, 7, f"  - {key}:", align='L')
-                self.set_font("NotoSansTC", "", 9)
+                self.cell(60, 7, f"  - {key}:", align='L')
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             self.ln(5)
-            if os.path.exists(snapshot['generated_image']):
-                img_w = 80
-                center_x = (self.w - img_w) / 2
-                self.image(snapshot['generated_image'], x=center_x, w=img_w)
-            
+            if os.path.exists(snapshot['generated_image_path']):
+                self.image(snapshot['generated_image_path'], x=(self.w-80)/2, w=80)
             self.ln(15)
 
     def create_conclusion_page(self, event_hash, num_snapshots):
         self.add_page()
         self.chapter_title("三、結論")
-        body = (
-            f"本次出證任務包含 {num_snapshots} 個版本的生成快照。所有快照的元數據已被整合並計算出最終的「事件雜湊值」。\n\n"
+        self.chapter_body(
+            f"本次出證任務包含 {num_snapshots} 個版本的生成快照。所有快照的元數據（包含 Base64 內容）已被整合並計算出最終的「事件雜湊值」。\n\n"
             "此雜湊值是對整個生成歷史的唯一數位簽章，可用於驗證本報告所含數據的完整性與真實性。"
         )
-        self.chapter_body(body)
         self.ln(10)
         self.set_font("NotoSansTC", "", 12)
         self.cell(0, 10, "最終事件雜湊值 (Final Event Hash):", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_font("Courier", "B", 11)
-        self.set_text_color(0)
         self.multi_cell(0, 8, event_hash, border=1, align='C', padding=5)
 
         qr_data = f"https://wesmart.ai/verify?hash={event_hash}"
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(qr_data)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
+        qr = qrcode.make(qr_data)
         qr_path = os.path.join(app.config['UPLOAD_FOLDER'], f"qr_{event_hash[:10]}.png")
-        img.save(qr_path)
-
+        qr.save(qr_path)
         self.ln(10)
-        self.set_font("NotoSansTC", "", 10)
-        self.cell(0, 10, "使用 WesmartAI 驗證服務掃描此 QR Code 以核對報告真偽。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        self.cell(0, 10, "掃描 QR Code 以核對報告真偽。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         self.image(qr_path, w=50, x=(self.w-50)/2)
-        
+
 # --- 全域會話變數 ---
 trace_token = str(uuid.uuid4())
 snapshots = []
@@ -233,8 +204,7 @@ def generate():
     prompt, seed_input = data.get('prompt'), data.get('seed')
     width, height = int(data.get('width', 512)), int(data.get('height', 512))
     
-    if not prompt:
-        return jsonify({"error": "Prompt 為必填項"}), 400
+    if not prompt: return jsonify({"error": "Prompt 為必填項"}), 400
     
     seed_value = int(seed_input) if seed_input and seed_input.isdigit() else random.randint(1, 10**9)
     url = "https://api.together.xyz/v1/images/generations"
@@ -244,29 +214,39 @@ def generate():
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=60)
         res.raise_for_status()
-        res_data = res.json()
-        image_url = res_data["data"][0]["url"]
+        image_url = res.json()["data"][0]["url"]
         image_response = requests.get(image_url, timeout=60)
         image_response.raise_for_status()
         img_bytes = image_response.content
 
+        # ===== 核心修改: Base64 處理 =====
+        # 1. 將圖片二進位轉為 Base64 字串
+        img_base64_str = base64.b64encode(img_bytes).decode('utf-8')
+        
+        # 2. 對 Base64 字串進行 SHA-256 雜湊
+        snapshot_hash = sha256_bytes(img_base64_str.encode('utf-8'))
+
+        # 為了預覽和PDF生成，仍然儲存實體檔案
         filename = f"v{version_counter}_{int(time.time())}.png"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         Image.open(io.BytesIO(img_bytes)).save(filepath)
 
+        # 3. 建立包含 Base64 的封存區塊
         sealed_block = {
             "version_index": version_counter,
             "trace_token": trace_token,
             "input_data": payload,
-            "snapshot_hash": sha256_bytes(img_bytes),
+            "snapshot_hash": snapshot_hash,
             "sealed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "generated_image": filepath
+            "content_base64": img_base64_str, # 新增欄位
+            "generated_image_path": filepath # 保留路徑供PDF使用
         }
         snapshots.append(sealed_block)
         version_counter += 1
-        # 在 generate 的回傳中，我們只需要單一圖片的 URL 給前端預覽
+        
         image_preview_url = url_for('static_preview', filename=filename)
         return jsonify({"success": True, "image_url": image_preview_url, "version": version_counter - 1, "seed": seed_value})
+
     except Exception as e:
         return jsonify({"error": f"生成失敗: {str(e)}"}), 500
 
@@ -276,19 +256,15 @@ def finalize():
     data = request.json
     applicant_name = data.get('applicant_name')
 
-    if not applicant_name:
-        return jsonify({"error": "出證申請人名稱為必填項"}), 400
-    if not snapshots:
-        return jsonify({"error": "沒有可供證明的生成圖像"}), 400
+    if not applicant_name: return jsonify({"error": "出證申請人名稱為必填項"}), 400
+    if not snapshots: return jsonify({"error": "沒有可供證明的生成圖像"}), 400
 
     try:
-        report_time_utc = datetime.datetime.now(datetime.timezone.utc)
-        report_time_str = report_time_utc.strftime('%Y-%m-%d %H:%M:%S %Z')
         report_id = str(uuid.uuid4())
+        report_time_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
         
         pdf = WesmartPDFReport()
-        cover_meta = {'applicant': applicant_name, 'report_time': report_time_str, 'report_id': report_id}
-        pdf.create_cover(cover_meta)
+        pdf.create_cover({'applicant': applicant_name, 'report_time': report_time_str, 'report_id': report_id})
         pdf.create_disclaimer_page()
         pdf.create_overview_page()
 
@@ -299,6 +275,7 @@ def finalize():
         }
         pdf.create_generation_details_page(experiment_meta, snapshots)
 
+        # 最終事件雜湊將包含所有 Base64 內容，確保完整性
         final_event_data = json.dumps(snapshots, sort_keys=True, ensure_ascii=False).encode('utf-8')
         final_event_hash = sha256_bytes(final_event_data)
         pdf.create_conclusion_page(final_event_hash, len(snapshots))
@@ -307,28 +284,22 @@ def finalize():
         report_filepath = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
         pdf.output(report_filepath)
 
-        # ===== 修改開始 =====
-        # 準備所有生成圖像的 URL 列表，用於下載
-        image_urls = [url_for('static_download', filename=os.path.basename(s['generated_image'])) for s in snapshots]
+        image_urls = [url_for('static_download', filename=os.path.basename(s['generated_image_path'])) for s in snapshots]
 
-        # 回傳包含報告和所有圖片下載 URL 的 JSON
         return jsonify({
             "success": True,
             "report_url": url_for('static_download', filename=report_filename),
             "image_urls": image_urls
         })
-        # ===== 修改結束 =====
 
     except Exception as e:
         print(f"報告生成失敗: {e}")
         return jsonify({"error": f"報告生成失敗: {str(e)}"}), 500
 
-# 建立一個給前端預覽圖片用的路由 (不強制下載)
 @app.route('/static/preview/<path:filename>')
 def static_preview(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# 建立一個專門用來下載檔案的路由 (強制下載)
 @app.route('/static/download/<path:filename>')
 def static_download(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
