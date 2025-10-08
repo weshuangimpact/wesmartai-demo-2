@@ -1,5 +1,5 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final7.3-zip-package-clean)
+# WesmartAI 證據報告 Web App (final7.4-image-positioning)
 # ====================================================================
 
 import requests, json, hashlib, uuid, datetime, random, time, os, io
@@ -89,11 +89,11 @@ class WesmartPDFReport(FPDF):
         line_height = 10
         indent = 20
         data = [
-            ("出证申请人:", meta['applicant']),
-            ("申请事项:", "WesmartAI 生成式 AI 證據報告"),
-            ("申请出证时间:", meta['report_time']),
-            ("出证编号:", meta['report_id']),
-            ("出证单位:", "WesmartAI Inc.")
+            ("出證申請人:", meta['applicant']),
+            ("申請事項:", "WesmartAI 生成式 AI 證據報告"),
+            ("申請出證時間:", meta['report_time']),
+            ("出證編號:", meta['report_id']),
+            ("出證單位:", "WesmartAI Inc.")
         ]
         for row in data:
             self.cell(indent)
@@ -127,7 +127,10 @@ class WesmartPDFReport(FPDF):
             "4. **區塊封存**: 每一次的生成紀錄（包含輸入參數、時間戳記、圖像雜湊值等）被視為一個「區塊」。所有相關的生成紀錄會被串聯起來，形成一個不可變的證據鏈。\n"
             "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中，以供查驗。"
         )
-
+    
+    # ====================================================================
+    # 【主要修改區域】
+    # ====================================================================
     def create_generation_details_page(self, experiment_meta, snapshots):
         self.add_page()
         self.chapter_title("一、生成任務基本資訊")
@@ -140,27 +143,43 @@ class WesmartPDFReport(FPDF):
             self.set_text_color(80)
             self.multi_cell(0, line_height, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(10)
+        
         self.chapter_title("二、各版本生成快照")
         for snapshot in snapshots:
             self.set_font("NotoSansTC", "", 12)
             self.cell(0, 10, f"版本索引: {snapshot['version_index']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
             self.ln(2)
-            self.set_font("NotoSansTC", "", 9)
+            
             details = [
                 ("時間戳記 (UTC)", snapshot['sealed_at']),
                 ("圖像雜湊 (SHA-256)", snapshot['snapshot_hash']),
                 ("輸入指令 (Prompt)", snapshot['input_data']['prompt']),
                 ("隨機種子 (Seed)", str(snapshot['input_data']['seed']))
             ]
+
+            # 先渲染所有文字
             for key, value in details:
                 self.set_font("NotoSansTC", "", 10)
                 self.cell(45, 7, f"  - {key}:", align='L')
                 self.set_font("NotoSansTC", "", 9)
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            
+            self.ln(5) # 在文字和圖片之間增加一些間距
+
+            # 渲染圖片
             if os.path.exists(snapshot['generated_image']):
-                self.image(snapshot['generated_image'], w=80, x=self.w - 100, y=self.get_y() - 35)
-            self.ln(20)
+                img_w = 80
+                img_h = 80 # 假設圖片為方形，可根據實際情況調整
+                
+                # 檢查頁面剩餘空間，如果不足則新增一頁
+                if self.get_y() + img_h > self.h - self.b_margin:
+                    self.add_page()
+                    self.chapter_title("二、各版本生成快照 (續)") # 換頁後增加標題
+
+                self.image(snapshot['generated_image'], w=img_w, x=XPos.LMARGIN)
+            
+            self.ln(15) # 在每個版本之間增加更多間距
 
     def create_conclusion_page(self, event_hash, num_snapshots):
         self.add_page()
