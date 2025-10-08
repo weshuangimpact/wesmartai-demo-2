@@ -1,8 +1,9 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final7.1-secure)
+# WesmartAI 證據報告 Web App (final7.2-secure)
 # 作者: Gemini
 # 修正: 補齊 finalize 函式，確保 PDF 報告能正確生成並回傳
 # 調整: 將生成快照的圖片移至文字下方並置中
+# 新增: finalize API 回應中增加所有生成圖檔的 URL，以便連續下載
 # ====================================================================
 
 import requests, json, hashlib, uuid, datetime, random, time, os, io
@@ -136,7 +137,7 @@ class WesmartPDFReport(FPDF):
             "2. **迭代生成**: 使用者在同一個追蹤權杖下可進行多次圖像生成。每一次生成，系統都會記錄完整的輸入參數（如 Prompt, Seed, 模型名稱等）及精確的 UTC 時間戳記。\n"
             "3. **數據固化**: 系統對每一次生成的圖像原始二進位數據計算 SHA-256 雜湊值。這個雜湊值是對該圖像內容的唯一數位指紋。\n"
             "4. **區塊封存**: 每一次的生成紀錄（包含輸入參數、時間戳記、圖像雜湊值等）被視為一個「區塊」。所有相關的生成紀錄會被串聯起來，形成一個不可變的證據鏈。\n"
-            "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中，以供查驗。"
+d            "5. **報告產出**: 當使用者結束任務時，系統會將整個證據鏈上的所有資訊，以及最終所有「區塊」的整合性雜湊值，一同寫入本份 PDF 報告中，以供查驗。"
         )
 
     def create_generation_details_page(self, experiment_meta, snapshots):
@@ -173,7 +174,6 @@ class WesmartPDFReport(FPDF):
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            # ===== 修改開始 =====
             # 插入圖片, 置於下方並水平置中
             self.ln(5) # 在文字和圖片之間增加一點間距
             if os.path.exists(snapshot['generated_image']):
@@ -183,7 +183,6 @@ class WesmartPDFReport(FPDF):
                 self.image(snapshot['generated_image'], x=center_x, w=img_w)
             
             self.ln(15) # 每個版本快照之間的間距
-            # ===== 修改結束 =====
 
     def create_conclusion_page(self, event_hash, num_snapshots):
         self.add_page()
@@ -325,11 +324,20 @@ def finalize():
         report_filepath = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
         pdf.output(report_filepath)
 
-        # 7. 回傳成功的 JSON 回應
+        # ===== 修改開始 =====
+        # 7. 準備所有生成圖像的 URL 列表
+        image_urls = []
+        for snapshot in snapshots:
+            image_filename = os.path.basename(snapshot['generated_image'])
+            image_urls.append(url_for('static', filename=image_filename))
+
+        # 8. 回傳包含報告和圖片 URL 的 JSON 回應
         return jsonify({
             "success": True,
-            "report_url": url_for('static', filename=report_filename)
+            "report_url": url_for('static', filename=report_filename),
+            "image_urls": image_urls
         })
+        # ===== 修改結束 =====
 
     except Exception as e:
         # 如果過程中發生任何錯誤，回傳詳細的錯誤訊息
