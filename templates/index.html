@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WesmartAI 證據報告生成器</title>
+    <title>WesmartAI 圖像生成即時加密封裝系統</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 2em; background-color: #f4f6f8; color: #333; }
         .container { max-width: 900px; margin: auto; background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -17,10 +17,13 @@
         button { background-color: #3f51b5; color: white; border: none; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #303f9f; }
         button:disabled { background-color: #9fa8da; cursor: not-allowed; }
-        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.5em; margin-top: 1.5em; }
-        .result-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.5em; margin-top: 1.5em; }
+        .result-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
         .result-card img { max-width: 100%; height: auto; display: block; }
-        .result-card p { padding: 1em; margin: 0; background: #fafafa; font-size: 0.9em; }
+        .result-card .info { padding: 1em; margin: 0; background: #fafafa; font-size: 0.9em; flex-grow: 1; }
+        .result-card .action { padding: 0.8em; background: #f0f0f0; }
+        .result-card .action button { width: 100%; padding: 0.6em; font-size: 0.9em; background-color: #00796b; }
+        .result-card .action button:disabled { background-color: #80cbc4; }
         .spinner { margin: 2em auto; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3f51b5; border-radius: 50%; animation: spin 1s linear infinite; display: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #status { text-align: center; margin-top: 1em; font-weight: 500; min-height: 1.2em; }
@@ -40,7 +43,7 @@
         </div>
         {% endif %}
 
-        <h2>1. 生成圖像</h2>
+        <h2>1. 生成圖像 (預覽)</h2>
         <div class="form-grid">
             <div class="form-group full-width">
                 <label for="prompt">輸入指令 (Prompt)</label>
@@ -70,35 +73,35 @@
 
         <hr>
 
-        <h2>2. 完成與下載</h2>
+        <h2>2. 完成報告</h2>
         <div class="form-group full-width">
             <label for="applicant_name">出證申請人名稱</label>
             <input type="text" id="applicant_name" placeholder="請輸入您的姓名或公司名稱">
         </div>
         
-        <div class="form-grid">
-            <div class="form-group">
-                <button id="download-images-btn" style="background-color: #00796b;">下載原圖</button>
-            </div>
-            <div class="form-group">
-                 <button id="finalize-btn">下載報告</button>
-            </div>
+        <div class="form-group full-width">
+             <button id="finalize-btn" disabled>下載報告 (請先存證至少一張圖片)</button>
         </div>
     </div>
 
     <script>
         const generateBtn = document.getElementById('generate-btn');
         const finalizeBtn = document.getElementById('finalize-btn');
-        const downloadImagesBtn = document.getElementById('download-images-btn');
         const spinner = document.getElementById('spinner');
         const statusEl = document.getElementById('status');
         const resultsGrid = document.getElementById('results-grid');
 
-        let generatedFiles = {
-            reportUrl: null,
-            imageUrls: []
-        };
+        // 下載檔案的輔助函式
+        function downloadFile(url) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = url.split('/').pop();
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
 
+        // 當點擊「生成圖像」
         generateBtn.addEventListener('click', async () => {
             const payload = {
                 prompt: document.getElementById('prompt').value,
@@ -125,16 +128,54 @@
                 const result = await response.json();
                 
                 if (response.ok) {
-                    statusEl.textContent = `✅ 版本 ${result.version} 生成成功！`;
+                    statusEl.textContent = `✅ 預覽圖 ${result.version} 生成成功！請選擇是否存證。`;
                     const card = document.createElement('div');
                     card.className = 'result-card';
+                    
+                    const sealBtnId = `seal-btn-${result.version}`;
                     card.innerHTML = `
                         <img src="${result.image_url}" alt="Generated Image ${result.version}">
-                        <p><b>版本 ${result.version}</b><br>Seed: ${result.seed}</p>
+                        <div class="info">
+                            <p><b>版本 ${result.version}</b><br>Seed: ${result.seed}</p>
+                        </div>
+                        <div class="action">
+                            <button id="${sealBtnId}">存證並下載</button>
+                        </div>
                     `;
                     resultsGrid.appendChild(card);
-                    document.getElementById('prompt').value = ''; 
-                    document.getElementById('seed').value = '';
+                    
+                    // 為新生成的按鈕加上事件監聽
+                    document.getElementById(sealBtnId).addEventListener('click', async (e) => {
+                        const sealBtn = e.target;
+                        sealBtn.disabled = true;
+                        sealBtn.textContent = '存證中...';
+
+                        try {
+                            const sealResponse = await fetch('/seal', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ filename: result.filename }),
+                            });
+                            const sealResult = await sealResponse.json();
+
+                            if (sealResponse.ok) {
+                                // 1. 觸發下載
+                                downloadFile(result.download_url);
+                                // 2. 更新按鈕狀態
+                                sealBtn.textContent = '已存證 ✅';
+                                // 3. 啟用「下載報告」按鈕
+                                finalizeBtn.disabled = false;
+                                finalizeBtn.textContent = '下載報告';
+                                statusEl.textContent = `版本 ${result.version} 已存證成功！`;
+                            } else {
+                                throw new Error(sealResult.error || '存證失敗');
+                            }
+                        } catch (err) {
+                            sealBtn.textContent = '存證失敗 ❌';
+                            statusEl.textContent = `❌ 錯誤: ${err.message}`;
+                        }
+                    });
+
                 } else {
                     throw new Error(result.error || '未知錯誤');
                 }
@@ -147,6 +188,7 @@
             }
         });
 
+        // 當點擊「下載報告」
         finalizeBtn.addEventListener('click', async () => {
             const applicantName = document.getElementById('applicant_name').value;
             if (!applicantName) {
@@ -157,7 +199,6 @@
             spinner.style.display = 'block';
             statusEl.textContent = '正在製作 PDF 報告...';
             finalizeBtn.disabled = true;
-            downloadImagesBtn.disabled = true;
 
             try {
                 const response = await fetch('/finalize', {
@@ -169,14 +210,7 @@
                 
                 if (response.ok) {
                     statusEl.textContent = '報告製作完成！即將開始下載...';
-                    
-                    // 儲存檔案 URLs
-                    generatedFiles.reportUrl = result.report_url;
-                    generatedFiles.imageUrls = result.image_urls || [];
-                    
-                    // 觸發報告下載
-                    downloadFile(generatedFiles.reportUrl);
-
+                    downloadFile(result.report_url);
                     alert('報告已準備下載。');
                 } else {
                     throw new Error(result.error || '未知錯誤');
@@ -187,32 +221,8 @@
             } finally {
                 spinner.style.display = 'none';
                 finalizeBtn.disabled = false;
-                downloadImagesBtn.disabled = false;
             }
         });
-
-        downloadImagesBtn.addEventListener('click', () => {
-            if (generatedFiles.imageUrls.length === 0) {
-                 alert('目前沒有已生成的圖片可供下載。請先生成報告以取得圖片連結！');
-                return;
-            }
-            statusEl.textContent = '正在下載所有原圖...';
-            generatedFiles.imageUrls.forEach(url => {
-                downloadFile(url);
-            });
-             setTimeout(() => {
-                statusEl.textContent = '圖片下載已觸發。';
-            }, 1500);
-        });
-
-        function downloadFile(url) {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = url.split('/').pop(); // 從 URL 中取得檔名
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
     </script>
 </body>
 </html>
