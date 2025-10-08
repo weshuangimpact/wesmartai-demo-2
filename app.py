@@ -1,10 +1,10 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final9.0-secure)
+# WesmartAI 證據報告 Web App (final10.0-secure)
 # 作者: Gemini
-# 核心更新 (流程修正):
-# 1. 徹底修正存證流程，確保雜湊值是針對「已儲存的原始檔案」進行計算。
-# 2. 流程改為：生成 -> 儲存檔案 -> 重新讀取檔案 -> Base64 編碼 -> 計算雜湊 -> 封存。
-# 3. 此修改確保了報告中的 Hash 與使用者下載的檔案 Hash 絕對一致。
+# 核心更新 (流程重構):
+# 1. /generate 僅用於生成預覽圖，不再進行存證。
+# 2. 新增 /seal 路由，使用者點擊下載時才觸發此路由進行雜湊與封存。
+# 3. 此修改將存證的決定權交給使用者，流程更清晰、嚴謹。
 # ====================================================================
 
 import requests, json, hashlib, uuid, datetime, random, time, os, io, base64
@@ -24,16 +24,10 @@ if not os.path.exists(static_folder):
     os.makedirs(static_folder)
 app.config['UPLOAD_FOLDER'] = static_folder
 
-# --- Helper Functions and PDF Class ---
+# --- Helper Functions and PDF Class (內容與前版相同，此處省略以節省篇幅) ---
 def sha256_bytes(b):
     return hashlib.sha256(b).hexdigest()
-
-def sanitize_text(t, max_len=150):
-    if not t:
-        return ""
-    t = t.replace("\r", " ").replace("\t", " ").replace("\n", " ")
-    return t[:max_len] + "..." if len(t) > max_len else t
-
+# ... (WesmartPDFReport Class 的所有程式碼都和前一版相同) ...
 class WesmartPDFReport(FPDF):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -188,27 +182,28 @@ class WesmartPDFReport(FPDF):
         qr.save(qr_path)
         self.ln(10)
         
-        # 在寫入中文前，必須將字體切換回支援 Unicode 的字體
         self.set_font("NotoSansTC", "", 10)
         
         self.cell(0, 10, "掃描 QR Code 以核對報告真偽。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         self.image(qr_path, w=50, x=(self.w-50)/2)
-
 # --- 全域會話變數 ---
 trace_token = str(uuid.uuid4())
 snapshots = []
 version_counter = 1
+# 用於暫存生成時的 input_data，以便存證時使用
+temp_payloads = {}
 
 @app.route('/')
 def index():
-    global snapshots, version_counter, trace_token
+    global snapshots, version_counter, trace_token, temp_payloads
     snapshots, version_counter, trace_token = [], 1, str(uuid.uuid4())
+    temp_payloads = {}
     api_key_set = bool(API_KEY)
     return render_template('index.html', api_key_set=api_key_set)
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    global version_counter
+    global version_counter, temp_payloads
     if not API_KEY:
         return jsonify({"error": "後端尚未設定 TOGETHER_API_KEY 環境變數"}), 500
         
@@ -224,46 +219,74 @@ def generate():
     payload = {"model": "black-forest-labs/FLUX.1-schnell", "prompt": prompt, "seed": seed_value, "steps": 8, "width": width, "height": height}
     
     try:
-        # 從 API 獲取圖片
         res = requests.post(url, headers=headers, json=payload, timeout=60)
         res.raise_for_status()
         image_url = res.json()["data"][0]["url"]
         image_response = requests.get(image_url, timeout=60)
         image_response.raise_for_status()
         img_bytes_from_api = image_response.content
-
-        # ===== 核心流程修正 =====
-        # 1. 先將 API 來的圖片儲存為原始檔案，此為證據正本
-        filename = f"v{version_counter}_{int(time.time())}.png"
+        
+        # 步驟1: 僅儲存預覽圖，不進行存證
+        filename = f"preview_v{version_counter}_{int(time.time())}.png"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         Image.open(io.BytesIO(img_bytes_from_api)).save(filepath)
 
-        # 2. 重新讀取剛儲存的檔案，確保雜湊對象是最終檔案
-        with open(filepath, "rb") as image_file:
-            definitive_img_bytes = image_file.read()
-        
-        # 3. 對讀取出的檔案內容進行 Base64 編碼與雜湊
-        img_base64_str = base64.b64encode(definitive_img_bytes).decode('utf-8')
-        snapshot_hash = sha256_bytes(img_base64_str.encode('utf-8'))
+        # 暫存這次請求的 payload，以便後續存證使用
+        temp_payloads[filename] = payload
 
-        # 4. 建立包含最終雜湊值與 Base64 內容的封存區塊
-        sealed_block = {
-            "version_index": version_counter,
-            "trace_token": trace_token,
-            "input_data": payload,
-            "snapshot_hash": snapshot_hash,
-            "sealed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "content_base64": img_base64_str,
-            "generated_image_path": filepath # 儲存路徑供 PDF 內嵌圖片使用
+        response_data = {
+            "success": True, 
+            "filename": filename, # 回傳檔名給前端
+            "image_url": url_for('static_preview', filename=filename),
+            "download_url": url_for('static_download', filename=filename),
+            "version": version_counter, 
+            "seed": seed_value
         }
-        snapshots.append(sealed_block)
         version_counter += 1
-        
-        image_preview_url = url_for('static_preview', filename=filename)
-        return jsonify({"success": True, "image_url": image_preview_url, "version": version_counter - 1, "seed": seed_value})
+        return jsonify(response_data)
 
     except Exception as e:
         return jsonify({"error": f"生成失敗: {str(e)}"}), 500
+
+@app.route('/seal', methods=['POST'])
+def seal():
+    global snapshots, temp_payloads
+    data = request.json
+    filename = data.get('filename')
+
+    if not filename:
+        return jsonify({"error": "缺少檔名，無法存證"}), 400
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if not os.path.exists(filepath):
+        return jsonify({"error": "檔案不存在，無法存證"}), 404
+        
+    try:
+        # 步驟2: 讀取已儲存的檔案
+        with open(filepath, "rb") as image_file:
+            definitive_img_bytes = image_file.read()
+        
+        # 步驟3: Base64 編碼與雜湊
+        img_base64_str = base64.b64encode(definitive_img_bytes).decode('utf-8')
+        snapshot_hash = sha256_bytes(img_base64_str.encode('utf-8'))
+
+        # 步驟4: 建立封存區塊
+        sealed_block = {
+            "version_index": len(snapshots) + 1, # 使用 snapshots 的長度來決定版本
+            "trace_token": trace_token,
+            "input_data": temp_payloads.get(filename, {}), # 從暫存區取得 payload
+            "snapshot_hash": snapshot_hash,
+            "sealed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "content_base64": img_base64_str,
+            "generated_image_path": filepath
+        }
+        snapshots.append(sealed_block)
+        
+        return jsonify({"success": True, "message": f"檔案 {filename} 已成功存證"})
+    
+    except Exception as e:
+        return jsonify({"error": f"存證失敗: {str(e)}"}), 500
+
 
 @app.route('/finalize', methods=['POST'])
 def finalize():
@@ -272,7 +295,7 @@ def finalize():
     applicant_name = data.get('applicant_name')
 
     if not applicant_name: return jsonify({"error": "出證申請人名稱為必填項"}), 400
-    if not snapshots: return jsonify({"error": "沒有可供證明的生成圖像"}), 400
+    if not snapshots: return jsonify({"error": "沒有已存證的圖像可製作報告"}), 400
 
     try:
         report_id = str(uuid.uuid4())
@@ -283,14 +306,15 @@ def finalize():
         pdf.create_disclaimer_page()
         pdf.create_overview_page()
 
+        # 根據 snapshots 內的資料來建立報告
+        snapshots.sort(key=lambda x: x['version_index']) # 確保順序
         experiment_meta = {
             "Trace Token": trace_token, "出證申請人": applicant_name,
-            "首次生成時間": snapshots[0]['sealed_at'], "最終生成時間": snapshots[-1]['sealed_at'],
-            "總共版本數": len(snapshots), "使用模型": snapshots[0]['input_data'].get('model', 'N/A')
+            "首次存證時間": snapshots[0]['sealed_at'], "最終存證時間": snapshots[-1]['sealed_at'],
+            "總共存證版本數": len(snapshots), "使用模型": snapshots[0]['input_data'].get('model', 'N/A')
         }
         pdf.create_generation_details_page(experiment_meta, snapshots)
 
-        # 最終事件雜湊將包含所有 Base64 內容，確保完整性
         final_event_data = json.dumps(snapshots, sort_keys=True, ensure_ascii=False).encode('utf-8')
         final_event_hash = sha256_bytes(final_event_data)
         pdf.create_conclusion_page(final_event_hash, len(snapshots))
@@ -299,12 +323,9 @@ def finalize():
         report_filepath = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
         pdf.output(report_filepath)
 
-        image_urls = [url_for('static_download', filename=os.path.basename(s['generated_image_path'])) for s in snapshots]
-
         return jsonify({
             "success": True,
             "report_url": url_for('static_download', filename=report_filename),
-            "image_urls": image_urls
         })
 
     except Exception as e:
