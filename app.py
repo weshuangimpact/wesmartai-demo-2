@@ -1,10 +1,9 @@
 # ====================================================================
-# WesmartAI 證據報告 Web App (final7.5-secure)
+# WesmartAI 證據報告 Web App (final7.6-secure)
 # 作者: Gemini
 # 修正: 補齊 finalize 函式，確保 PDF 報告能正確生成並回傳
 # 調整: 將生成快照的圖片移至文字下方並置中
-# 新增: finalize API 回應中增加所有生成圖檔的 URL，以便連續下載
-# 修正: 移除 create_overview_page 函式中的一個語法錯誤 (typo)
+# 新增: 配合 index.html 的雙按鈕下載功能，調整 finalize API 的回傳內容
 # 修正: 讓所有靜態檔案都以附件方式下載，而非在瀏覽器中開啟
 # ====================================================================
 
@@ -176,15 +175,13 @@ class WesmartPDFReport(FPDF):
                 self.set_text_color(80)
                 self.multi_cell(0, 7, str(value), align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            # 插入圖片, 置於下方並水平置中
-            self.ln(5) # 在文字和圖片之間增加一點間距
+            self.ln(5)
             if os.path.exists(snapshot['generated_image']):
                 img_w = 80
-                # 計算 X 座標以將圖片置中
                 center_x = (self.w - img_w) / 2
                 self.image(snapshot['generated_image'], x=center_x, w=img_w)
             
-            self.ln(15) # 每個版本快照之間的間距
+            self.ln(15)
 
     def create_conclusion_page(self, event_hash, num_snapshots):
         self.add_page()
@@ -201,7 +198,6 @@ class WesmartPDFReport(FPDF):
         self.set_text_color(0)
         self.multi_cell(0, 8, event_hash, border=1, align='C', padding=5)
 
-        # 產生 QR Code
         qr_data = f"https://wesmart.ai/verify?hash={event_hash}"
         qr = qrcode.QRCode(version=1, box_size=10, border=4)
         qr.add_data(qr_data)
@@ -223,7 +219,6 @@ version_counter = 1
 @app.route('/')
 def index():
     global snapshots, version_counter, trace_token
-    # 重置會話
     snapshots, version_counter, trace_token = [], 1, str(uuid.uuid4())
     api_key_set = bool(API_KEY)
     return render_template('index.html', api_key_set=api_key_set)
@@ -269,14 +264,15 @@ def generate():
         }
         snapshots.append(sealed_block)
         version_counter += 1
-        return jsonify({"success": True, "image_url": url_for('static', filename=filename), "version": version_counter - 1, "seed": seed_value})
+        # 在 generate 的回傳中，我們只需要單一圖片的 URL 給前端預覽
+        image_preview_url = url_for('static_preview', filename=filename)
+        return jsonify({"success": True, "image_url": image_preview_url, "version": version_counter - 1, "seed": seed_value})
     except Exception as e:
         return jsonify({"error": f"生成失敗: {str(e)}"}), 500
 
 @app.route('/finalize', methods=['POST'])
 def finalize():
     global snapshots
-
     data = request.json
     applicant_name = data.get('applicant_name')
 
@@ -286,67 +282,55 @@ def finalize():
         return jsonify({"error": "沒有可供證明的生成圖像"}), 400
 
     try:
-        # 1. 準備報告元數據
         report_time_utc = datetime.datetime.now(datetime.timezone.utc)
         report_time_str = report_time_utc.strftime('%Y-%m-%d %H:%M:%S %Z')
         report_id = str(uuid.uuid4())
         
-        # 2. 建立 PDF 物件
         pdf = WesmartPDFReport()
-
-        # 3. 建立報告封面與說明頁面
-        cover_meta = {
-            'applicant': applicant_name,
-            'report_time': report_time_str,
-            'report_id': report_id,
-        }
+        cover_meta = {'applicant': applicant_name, 'report_time': report_time_str, 'report_id': report_id}
         pdf.create_cover(cover_meta)
         pdf.create_disclaimer_page()
         pdf.create_overview_page()
 
-        # 4. 建立生成任務細節頁面
-        first_snapshot = snapshots[0]
         experiment_meta = {
-            "Trace Token": trace_token,
-            "出證申請人": applicant_name,
-            "首次生成時間": first_snapshot['sealed_at'],
-            "最終生成時間": snapshots[-1]['sealed_at'],
-            "總共版本數": len(snapshots),
-            "使用模型": first_snapshot['input_data'].get('model', 'N/A')
+            "Trace Token": trace_token, "出證申請人": applicant_name,
+            "首次生成時間": snapshots[0]['sealed_at'], "最終生成時間": snapshots[-1]['sealed_at'],
+            "總共版本數": len(snapshots), "使用模型": snapshots[0]['input_data'].get('model', 'N/A')
         }
         pdf.create_generation_details_page(experiment_meta, snapshots)
 
-        # 5. 計算最終事件雜湊並建立結論頁
         final_event_data = json.dumps(snapshots, sort_keys=True, ensure_ascii=False).encode('utf-8')
         final_event_hash = sha256_bytes(final_event_data)
         pdf.create_conclusion_page(final_event_hash, len(snapshots))
         
-        # 6. 儲存 PDF 檔案
         report_filename = f"WesmartAI_Report_{report_id}.pdf"
         report_filepath = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
         pdf.output(report_filepath)
 
-        # 7. 準備所有生成圖像的 URL 列表
-        image_urls = []
-        for snapshot in snapshots:
-            image_filename = os.path.basename(snapshot['generated_image'])
-            image_urls.append(url_for('static', filename=image_filename))
+        # ===== 修改開始 =====
+        # 準備所有生成圖像的 URL 列表，用於下載
+        image_urls = [url_for('static_download', filename=os.path.basename(s['generated_image'])) for s in snapshots]
 
-        # 8. 回傳包含報告和圖片 URL 的 JSON 回應
+        # 回傳包含報告和所有圖片下載 URL 的 JSON
         return jsonify({
             "success": True,
-            "report_url": url_for('static', filename=report_filename),
+            "report_url": url_for('static_download', filename=report_filename),
             "image_urls": image_urls
         })
+        # ===== 修改結束 =====
 
     except Exception as e:
-        # 如果過程中發生任何錯誤，回傳詳細的錯誤訊息
-        print(f"Error during PDF generation: {e}") # 在後端日誌中印出詳細錯誤
+        print(f"報告生成失敗: {e}")
         return jsonify({"error": f"報告生成失敗: {str(e)}"}), 500
 
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    # 使用 as_attachment=True 來強制瀏覽器下載檔案，而不是直接開啟
+# 建立一個給前端預覽圖片用的路由 (不強制下載)
+@app.route('/static/preview/<path:filename>')
+def static_preview(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# 建立一個專門用來下載檔案的路由 (強制下載)
+@app.route('/static/download/<path:filename>')
+def static_download(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
 
 if __name__ == '__main__':
