@@ -243,13 +243,55 @@ def generate():
 # === 生成報告 ===
 @app.route('/finalize', methods=['POST'])
 def finalize():
-    global snapshots
+    global snapshots, version_counter, trace_token
     data = request.json
     applicant_name = data.get('applicant_name')
+    prompt = data.get('prompt', 'default image')  # 若前端未傳，預設生成一張
 
-    # 防呆：未先生成圖片禁止出報告
+    # 若尚未生成圖片，自動觸發一次生成
     if not snapshots:
-        return jsonify({"error": "尚未生成任何圖片。請先完成圖像生成再出具報告。"}), 400
+        try:
+            print("[防呆] 尚未生成圖片，自動觸發首次生成...")
+            seed_value = random.randint(1, 10**9)
+            url = "https://api.together.xyz/v1/images/generations"
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            payload = {
+                "model": "black-forest-labs/FLUX.1-schnell",
+                "prompt": prompt,
+                "seed": seed_value,
+                "steps": 8,
+                "width": 512,
+                "height": 512
+            }
+            res = requests.post(url, headers=headers, json=payload, timeout=60)
+            res.raise_for_status()
+            res_data = res.json()
+            image_url = res_data["data"][0]["url"]
+            image_response = requests.get(image_url, timeout=60)
+            image_response.raise_for_status()
+            img_bytes = image_response.content
+
+            filename = f"v{version_counter}_{int(time.time())}.png"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            with open(filepath, "wb") as f:
+                f.write(img_bytes)
+
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+            snapshot_hash = sha256_bytes(img_base64.encode("utf-8"))
+
+            snapshots.append({
+                "version_index": version_counter,
+                "trace_token": trace_token,
+                "input_data": payload,
+                "snapshot_hash": snapshot_hash,
+                "sealed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "generated_image": filepath
+            })
+            version_counter += 1
+        except Exception as e:
+            return jsonify({"error": f"自動生成圖片失敗: {str(e)}"}), 500
+
+    # 再進入正式報告生成
     if not applicant_name:
         return jsonify({"error": "出證申請人名稱為必填項"}), 400
 
@@ -286,19 +328,6 @@ def finalize():
             "report_url": url_for('static_download', filename=report_filename),
             "image_urls": [url_for('static_download', filename=os.path.basename(s['generated_image'])) for s in snapshots]
         })
-
     except Exception as e:
         print(f"報告生成失敗: {e}")
         return jsonify({"error": f"報告生成失敗: {str(e)}"}), 500
-
-# === 檔案預覽與下載 ===
-@app.route('/static/preview/<path:filename>')
-def static_preview(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-@app.route('/static/download/<path:filename>')
-def static_download(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
-
-if __name__ == '__main__':
-    app.run(debug=True)
