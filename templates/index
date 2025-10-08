@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WesmartAI 證據報告生成器</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 2em; background-color: #f4f6f8; color: #333; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1, h2 { color: #1a237e; text-align: center; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; margin-bottom: 1.5em; }
+        .form-group { display: flex; flex-direction: column; }
+        label { font-weight: 600; margin-bottom: 0.5em; color: #555; }
+        input, textarea, button { font-size: 1em; padding: 0.8em; border-radius: 6px; border: 1px solid #ccc; transition: all 0.2s ease; }
+        input:focus, textarea:focus { border-color: #3f51b5; box-shadow: 0 0 0 3px rgba(63, 81, 181, 0.2); outline: none; }
+        textarea { resize: vertical; min-height: 80px; }
+        .full-width { grid-column: 1 / -1; }
+        button { background-color: #3f51b5; color: white; border: none; cursor: pointer; font-weight: 600; }
+        button:hover { background-color: #303f9f; }
+        #finalize-btn { background-color: #1e88e5; }
+        #finalize-btn:hover { background-color: #1565c0; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3f51b5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: none; margin: 1em auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1em; margin-top: 2em; }
+        .result-card { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .result-card img { max-width: 100%; display: block; }
+        .result-card p { font-size: 0.85em; padding: 0.8em; margin: 0; background: #fafafa; }
+        #status { text-align: center; margin-top: 1em; font-weight: 600; }
+        .api-status { text-align: center; padding: 0.5em; border-radius: 6px; margin-bottom: 1.5em; font-weight: 600; }
+        .api-ok { background-color: #e8f5e9; color: #2e7d32; }
+        .api-error { background-color: #ffebee; color: #c62828; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WesmartAI 證據報告生成器</h1>
+
+        {% if api_key_set %}
+            <div class="api-status api-ok">後端 API Key 已成功讀取</div>
+        {% else %}
+            <div class="api-status api-error">錯誤：後端尚未設定 TOGETHER_API_KEY 環境變數</div>
+        {% endif %}
+        
+        <div class="form-grid">
+            <div class="form-group">
+                <label for="applicant_name">出證申請人名稱</label>
+                <input type="text" id="applicant_name" placeholder="例如: Wes Huang">
+            </div>
+            <div class="form-group">
+                </div>
+            <div class="form-group">
+                <label for="width">寬度</label>
+                <input type="number" id="width" value="512">
+            </div>
+            <div class="form-group">
+                <label for="height">高度</label>
+                <input type="number" id="height" value="512">
+            </div>
+        </div>
+
+        <hr>
+        <h2>圖像生成</h2>
+        <div class="form-grid">
+            <div class="form-group full-width">
+                <label for="prompt">生成指令 (Prompt)</label>
+                <textarea id="prompt" placeholder="請輸入圖像生成指令..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="seed">隨機種子 (Seed) - 選填</label>
+                <input type="text" id="seed" placeholder="留空則隨機">
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button id="generate-btn">生成圖像</button>
+            </div>
+        </div>
+        
+        <div class="spinner" id="spinner"></div>
+        <div id="status"></div>
+        
+        <div id="results-grid"></div>
+
+        <hr>
+        <div class="form-group full-width">
+             <button id="finalize-btn">完成並製作證據報告</button>
+        </div>
+    </div>
+
+    <script>
+        const generateBtn = document.getElementById('generate-btn');
+        const finalizeBtn = document.getElementById('finalize-btn');
+        const spinner = document.getElementById('spinner');
+        const statusEl = document.getElementById('status');
+        const resultsGrid = document.getElementById('results-grid');
+
+        generateBtn.addEventListener('click', async () => {
+            const payload = {
+                prompt: document.getElementById('prompt').value,
+                seed: document.getElementById('seed').value,
+                width: document.getElementById('width').value,
+                height: document.getElementById('height').value,
+            };
+
+            if (!payload.prompt) {
+                alert('Prompt 為必填項！');
+                return;
+            }
+
+            spinner.style.display = 'block';
+            statusEl.textContent = '圖像生成中，請稍候...';
+            generateBtn.disabled = true;
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    statusEl.textContent = `✅ 版本 ${result.version} 生成成功！`;
+                    const card = document.createElement('div');
+                    card.className = 'result-card';
+                    card.innerHTML = `
+                        <img src="${result.image_url}" alt="Generated Image ${result.version}">
+                        <p><b>版本 ${result.version}</b><br>Seed: ${result.seed}</p>
+                    `;
+                    resultsGrid.appendChild(card);
+                    document.getElementById('prompt').value = ''; 
+                    document.getElementById('seed').value = '';
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+
+            } catch (error) {
+                statusEl.textContent = `❌ 錯誤: ${error.message}`;
+            } finally {
+                spinner.style.display = 'none';
+                generateBtn.disabled = false;
+            }
+        });
+
+        finalizeBtn.addEventListener('click', async () => {
+            const applicantName = document.getElementById('applicant_name').value;
+            if (!applicantName) {
+                alert('請輸入出證申請人名稱！');
+                return;
+            }
+
+            spinner.style.display = 'block';
+            statusEl.textContent = '正在製作 PDF 報告...';
+            finalizeBtn.disabled = true;
+
+            try {
+                const response = await fetch('/finalize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ applicant_name: applicantName }),
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    statusEl.textContent = '報告製作完成！即將開始下載...';
+                    window.location.href = result.report_url;
+                    setTimeout(() => {
+                        alert('報告已準備下載。若要開始新任務，請重新整理頁面。');
+                    }, 1000);
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+
+            } catch (error) {
+                statusEl.textContent = `❌ 錯誤: ${error.message}`;
+            } finally {
+                spinner.style.display = 'none';
+                finalizeBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
